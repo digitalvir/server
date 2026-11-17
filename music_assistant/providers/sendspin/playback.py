@@ -927,6 +927,9 @@ class SendspinPlaybackSession:
 
         async def _commit_pending_chunks() -> None:
             nonlocal pending_duration_us
+            hwtest_index = 0
+            hwtest_first_us: int | None = None
+            hwtest_previous_us: int | None = None
             while True:
                 pending = await pending_chunks.get()
                 if pending is None:
@@ -975,6 +978,24 @@ class SendspinPlaybackSession:
                     # Stream stopped since it was replaced by another stream
                     self.player.logger.debug("Stopping commit loop due to stopped push stream")
                     break
+                hwtest_timeline_us = int(commit_start_us) - self._produced_audio_us
+                if hwtest_first_us is None:
+                    hwtest_first_us = hwtest_timeline_us
+                hwtest_jump_us = (
+                    0 if hwtest_previous_us is None else hwtest_timeline_us - hwtest_previous_us
+                )
+                if hwtest_index < 60 or hwtest_jump_us != 0:
+                    self.player.logger.debug(
+                        "HWTEST commit %d: %.1f ms of audio, %.1f ms ahead of now, "
+                        "timeline moved %+.2f ms (%+.2f ms since the first commit)",
+                        hwtest_index,
+                        pending.duration_us / 1000,
+                        (int(commit_start_us) - push_stream.now_us()) / 1000,
+                        hwtest_jump_us / 1000,
+                        (hwtest_timeline_us - hwtest_first_us) / 1000,
+                    )
+                hwtest_previous_us = hwtest_timeline_us
+                hwtest_index += 1
                 await push_stream.sleep_to_limit_buffer(_PRODUCER_BUFFER_LIMIT_US)
                 commit_now_us = push_stream.now_us()
                 committed_history_chunk = _HistoryChunk(
